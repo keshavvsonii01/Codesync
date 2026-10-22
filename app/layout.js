@@ -7,6 +7,7 @@ const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
 export const metadata = {
   title: 'CodeSync - Real-Time Collaborative Editor',
   description: 'Code together in real-time with your team',
+  icons: { icon: '/favicon-96x96.png' },
 }
 
 export default function RootLayout({ children }) {
