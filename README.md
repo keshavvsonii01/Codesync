@@ -72,6 +72,7 @@ Create a `.env.local` file in the root directory and add the required environmen
 
 ```env
 # Add your required API configuration here
+GEMINI_API_KEY=**************************
 ```
 
 > **Note:** Never commit API keys, credentials, or other sensitive information to the repository.
