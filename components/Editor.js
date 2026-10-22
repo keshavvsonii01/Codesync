@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import MonacoEditor from '@monaco-editor/react';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
@@ -10,14 +10,17 @@ export default function Editor({
   language, 
   editorRef: parentEditorRef, 
   monacoRef: parentMonacoRef,
-  onCodeChange 
+  onCodeChange,
+  onCursorChange
 }) {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const ydocRef = useRef(null);
   const bindingRef = useRef(null);
   const awarenessRef = useRef(null);
-  const [remoteCursors, setRemoteCursors] = useState({});
+  const remoteCursorsRef = useRef(new Map());
+  const usersHandlerRef = useRef(null);
+  const connectHandlerRef = useRef(null);
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -26,6 +29,9 @@ export default function Editor({
     // Expose to parent component for AI Chat
     if (parentEditorRef) parentEditorRef.current = editor;
     if (parentMonacoRef) parentMonacoRef.current = monaco;
+
+    // The web font may finish loading after Monaco measured character widths.
+    document.fonts?.ready.then(() => monaco.editor.remeasureFonts());
 
     // Initialize Yjs document
     const ydoc = new Y.Doc();
@@ -113,32 +119,37 @@ export default function Editor({
     bindingRef.current = binding;
 
     // Handle Yjs updates from this client
-    ydoc.on('update', (update) => {
-      // Convert update to array for transmission
-      const updateArray = Array.from(update);
-      socket.emit('yjs-sync', { roomId, update: updateArray });
+    ydoc.on('update', (update, origin) => {
+      if (origin === 'remote') return;
+      socket.emit('yjs-sync', { roomId, update: Array.from(update) });
     });
 
     // Handle incoming Yjs updates from other clients
     socket.on('yjs-sync', ({ update }) => {
-      const uint8Array = new Uint8Array(update);
-      Y.applyUpdate(ydoc, uint8Array);
+      Y.applyUpdate(ydoc, new Uint8Array(update), 'remote');
     });
+
+    // Pull the room's current text, and push ours in case the server restarted and lost it.
+    const syncWithServer = () => {
+      if (!socket.connected) return;
+      socket.emit('yjs-request-state', { roomId });
+      socket.emit('yjs-sync', { roomId, update: Array.from(Y.encodeStateAsUpdate(ydoc)) });
+    };
+    syncWithServer();
+    connectHandlerRef.current = syncWithServer;
+    socket.on('connect', syncWithServer);
 
     // Handle incoming awareness updates
     socket.on('yjs-awareness', ({ update }) => {
       if (update.clientID !== socket.id) {
         awareness.states.set(update.clientID, update.state);
-        setRemoteCursors((prev) => ({
-          ...prev,
-          [update.clientID]: update.state
-        }));
       }
     });
 
     // Listen for cursor position changes
     editor.onDidChangeCursorPosition((e) => {
       const position = e.position;
+      onCursorChange?.({ lineNumber: position.lineNumber, column: position.column });
       socket.emit('cursor-position', {
         roomId,
         position: {
@@ -151,63 +162,79 @@ export default function Editor({
 
     // Handle remote cursor updates
     socket.on('remote-cursor', ({ userId, position, user }) => {
-      setRemoteCursors((prev) => ({
-        ...prev,
-        [userId]: { position, user }
-      }));
-
-      // Render cursor decoration
-      renderRemoteCursor(editor, monaco, userId, position, user);
+      upsertRemoteCursor(editor, monaco, userId, position, user);
     });
 
-    // Auto-save functionality
-    let saveTimeout;
-    editor.onDidChangeModelContent(() => {
-      clearTimeout(saveTimeout);
-      
-      // Update parent component with current code for AI context
-      if (onCodeChange) {
-        onCodeChange(editor.getValue());
+    // Drop carets of people who left the room
+    usersHandlerRef.current = (users) => {
+      const ids = new Set(users.map((u) => u.id));
+      for (const id of remoteCursorsRef.current.keys()) {
+        if (!ids.has(id)) removeRemoteCursor(editor, id);
       }
-      
-      saveTimeout = setTimeout(() => {
-        const content = editor.getValue();
-        socket.emit('save-code', {
-          roomId,
-          content,
-          language
-        });
-      }, 2000);
+    };
+    socket.on('users-update', usersHandlerRef.current);
+
+    // Carets follow their tracked decoration when the text around them changes
+    editor.onDidChangeModelContent(() => {
+      for (const c of remoteCursorsRef.current.values()) editor.layoutContentWidget(c.widget);
+    });
+
+    editor.onDidChangeModelContent(() => {
+      onCodeChange?.(editor.getValue());
     });
   };
 
-  const renderRemoteCursor = (editor, monaco, userId, position, user) => {
-    // Create decoration for remote cursor
-    const decorations = editor.deltaDecorations(
-      [],
-      [
-        {
-          range: new monaco.Range(
-            position.lineNumber,
-            position.column,
-            position.lineNumber,
-            position.column
-          ),
-          options: {
-            className: `remote-cursor-${userId}`,
-            beforeContentClassName: `remote-cursor-label-${userId}`,
-            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
-          }
-        }
-      ]
-    );
+  const upsertRemoteCursor = (editor, monaco, userId, position, user) => {
+    const cursors = remoteCursorsRef.current;
+    let c = cursors.get(userId);
 
-    // Auto-remove decoration after 3 seconds
-    setTimeout(() => {
-      if (editor && !editor._isDisposed) {
-        editor.deltaDecorations(decorations, []);
-      }
-    }, 3000);
+    if (!c) {
+      const node = document.createElement('div');
+      node.className = 'remote-caret';
+      node.style.height = `${editor.getOption(monaco.editor.EditorOption.lineHeight)}px`;
+      const label = document.createElement('div');
+      label.className = 'remote-caret-label';
+      node.appendChild(label);
+
+      c = { node, label, decorations: editor.createDecorationsCollection(), idleTimer: null };
+      c.widget = {
+        getId: () => `remote-caret-${userId}`,
+        getDomNode: () => node,
+        getPosition: () => ({
+          position: c.decorations.getRange(0)?.getStartPosition() ?? null,
+          preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
+        }),
+      };
+      cursors.set(userId, c);
+      editor.addContentWidget(c.widget);
+    }
+
+    const { lineNumber, column } = position;
+    c.decorations.set([{
+      range: new monaco.Range(lineNumber, column, lineNumber, column),
+      options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+    }]);
+
+    c.node.style.background = user.color;
+    c.label.style.background = user.color;
+    c.label.textContent = user.name;
+    // No room above the first line, so the label flips below the caret there.
+    c.label.classList.toggle('below', lineNumber === 1);
+
+    c.node.classList.remove('idle');
+    clearTimeout(c.idleTimer);
+    c.idleTimer = setTimeout(() => c.node.classList.add('idle'), 2500);
+
+    editor.layoutContentWidget(c.widget);
+  };
+
+  const removeRemoteCursor = (editor, userId) => {
+    const c = remoteCursorsRef.current.get(userId);
+    if (!c) return;
+    clearTimeout(c.idleTimer);
+    c.decorations.clear();
+    editor.removeContentWidget(c.widget);
+    remoteCursorsRef.current.delete(userId);
   };
 
   useEffect(() => {
@@ -225,44 +252,113 @@ export default function Editor({
         socket.off('yjs-sync');
         socket.off('yjs-awareness');
         socket.off('remote-cursor');
+        if (usersHandlerRef.current) socket.off('users-update', usersHandlerRef.current);
+        if (connectHandlerRef.current) socket.off('connect', connectHandlerRef.current);
       }
+      for (const c of remoteCursorsRef.current.values()) clearTimeout(c.idleTimer);
+      remoteCursorsRef.current.clear();
     };
   }, [socket]);
 
   return (
     <>
       <style jsx global>{`
-        [class*="remote-cursor-"] {
-          background-color: rgba(255, 100, 100, 0.3);
-          border-left: 2px solid #ff6464;
+        .remote-caret {
+          width: 2px;
+          pointer-events: none;
         }
-        [class*="remote-cursor-label-"]::before {
-          content: '●';
+        /* Small flag that stays visible once the name tag fades */
+        .remote-caret::before {
+          content: '';
           position: absolute;
-          color: #ff6464;
-          font-size: 12px;
-          transform: translate(-8px, -2px);
-          animation: pulse 2s ease-in-out infinite;
+          top: -3px;
+          left: -2px;
+          width: 6px;
+          height: 6px;
+          border-radius: 1px;
+          background: inherit;
+          opacity: 0;
+          transition: opacity 0.2s;
         }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
+        .remote-caret.idle::before {
+          opacity: 1;
+        }
+        .remote-caret-label {
+          position: absolute;
+          bottom: 100%;
+          left: 0;
+          margin-bottom: 1px;
+          padding: 0 6px;
+          border-radius: 3px 3px 3px 0;
+          color: #0D0E0E;
+          font: 600 10px/16px var(--font-mono), ui-monospace, monospace;
+          letter-spacing: 0.02em;
+          white-space: nowrap;
+          transition: opacity 0.2s;
+        }
+        .remote-caret-label.below {
+          bottom: auto;
+          top: 100%;
+          margin: 1px 0 0;
+          border-radius: 0 3px 3px 3px;
+        }
+        .remote-caret.idle .remote-caret-label {
+          opacity: 0;
         }
       `}</style>
       <MonacoEditor
         height="100%"
         language={language}
-        theme="vs-dark"
+        theme="codesync"
+        beforeMount={(monaco) => {
+          // Monaco can't read CSS variables, so the palette from globals.css is repeated here.
+          monaco.editor.defineTheme('codesync', {
+            base: 'vs-dark',
+            inherit: true,
+            rules: [
+              { token: 'comment', foreground: '6B716E', fontStyle: 'italic' },
+              { token: 'keyword', foreground: 'C6C4DA' },
+              { token: 'string', foreground: '6FD3A8' },
+              { token: 'number', foreground: 'D1CEE4' },
+              { token: 'type', foreground: 'BED6CD' },
+              { token: 'type.identifier', foreground: 'BED6CD' },
+              { token: 'tag', foreground: 'C6C4DA' },
+              { token: 'attribute.name', foreground: 'BED6CD' },
+              { token: 'attribute.value', foreground: '6FD3A8' },
+              { token: 'delimiter', foreground: '8C928F' },
+            ],
+            colors: {
+              'editor.background': '#131413',
+              'editor.foreground': '#E4E2E1',
+              'editor.lineHighlightBackground': '#1B1C1B',
+              'editor.lineHighlightBorder': '#00000000',
+              'editor.selectionBackground': '#6FD3A833',
+              'editor.inactiveSelectionBackground': '#6FD3A81A',
+              'editorCursor.foreground': '#6FD3A8',
+              'editorLineNumber.foreground': '#424846',
+              'editorLineNumber.activeForeground': '#8C928F',
+              'editorIndentGuide.background1': '#FFFFFF0F',
+              'editorWidget.background': '#1B1C1B',
+              'editorWidget.border': '#FFFFFF24',
+              'editorSuggestWidget.background': '#1B1C1B',
+              'editorSuggestWidget.border': '#FFFFFF24',
+              'editorSuggestWidget.selectedBackground': '#292A29',
+              'minimap.background': '#131413',
+              'scrollbarSlider.background': '#FFFFFF14',
+              'scrollbarSlider.hoverBackground': '#FFFFFF24',
+            },
+          });
+        }}
         onMount={handleEditorDidMount}
         options={{
-          fontSize: 14,
-          minimap: { enabled: true },
+          fontSize: 13,
+          minimap: { enabled: true, renderCharacters: false },
           scrollBeyondLastLine: false,
           wordWrap: 'on',
           automaticLayout: true,
           tabSize: 2,
           padding: { top: 16, bottom: 16 },
-          fontFamily: "'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+          fontFamily: "var(--font-mono), 'Cascadia Code', Consolas, monospace",
           fontLigatures: true,
           cursorBlinking: 'smooth',
           cursorSmoothCaretAnimation: true,

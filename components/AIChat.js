@@ -52,7 +52,8 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
       });
 
       if (!response.ok) {
-        throw new Error('Failed to get AI response');
+        const reason = response.status === 500 ? '' : (await response.text()).slice(0, 200);
+        throw new Error(reason || 'Failed to get AI response');
       }
 
       // Handle streaming response
@@ -87,7 +88,9 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
         ...prev,
         {
           role: 'model',
-          content: '❌ Sorry, I encountered an error. Please try again.'
+          content: error.message && error.message !== 'Failed to get AI response' && !(error instanceof TypeError)
+            ? `❌ ${error.message}`
+            : '❌ Sorry, I encountered an error. Please try again.'
         }
       ]);
     } finally {
@@ -159,36 +162,36 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
   if (!isOpen) return null;
 
   return (
-    <div className="w-80 h-full bg-gray-900 border-l border-gray-700 flex flex-col">
+    <div className="flex h-full w-80 flex-col bg-surface">
       {/* Header */}
-      <div className="h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+      <div className="flex h-12 items-center justify-between border-b border-line px-3">
+        <div className="flex items-center space-x-2.5">
+          <div className="grid h-7 w-7 place-items-center rounded border border-accent/25 bg-accent/10 text-accent">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
             </svg>
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-gray-200">AI Assistant</h3>
-            <p className="text-xs text-gray-500">Powered by Gemini</p>
+            <h3 className="text-sm font-semibold text-fg">AI Assistant</h3>
+            <p className="font-mono text-[10px] uppercase tracking-[0.06em] text-muted">Powered by Gemini</p>
           </div>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1">
           <button
             onClick={clearChat}
-            className="p-1.5 hover:bg-gray-700 rounded transition-colors"
+            className="rounded p-1.5 text-muted transition-colors hover:bg-white/5 hover:text-fg"
             title="Clear chat"
           >
-            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
           </button>
           <button
             onClick={onClose}
-            className="p-1.5 hover:bg-gray-700 rounded transition-colors"
+            className="rounded p-1.5 text-muted transition-colors hover:bg-white/5 hover:text-fg"
             title="Close chat"
           >
-            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -203,10 +206,10 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[85%] rounded-lg p-3 ${
+              className={`max-w-[85%] rounded-lg border p-3 ${
                 msg.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-800 text-gray-200'
+                  ? 'border-accent/25 bg-accent/10 text-fg'
+                  : 'border-line bg-raised text-fg'
               }`}
             >
               {msg.role === 'user' ? (
@@ -224,7 +227,7 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
                           <div className="relative group my-2">
                             <button
                               onClick={() => insertCodeAtCursor(codeString)}
-                              className="absolute top-2 right-2 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 z-10"
+                              className="absolute top-2 right-2 px-2 py-1 bg-accent hover:bg-accent-hover text-on-accent text-xs font-semibold rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex items-center space-x-1 z-10"
                               title="Insert code at cursor"
                             >
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -238,7 +241,9 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
                               PreTag="div"
                               customStyle={{
                                 margin: 0,
-                                borderRadius: '0.375rem',
+                                background: '#0D0E0E',
+                                border: '1px solid rgb(255 255 255 / 0.08)',
+                                borderRadius: '0.25rem',
                                 fontSize: '0.813rem',
                                 padding: '1rem'
                               }}
@@ -248,7 +253,7 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
                             </SyntaxHighlighter>
                           </div>
                         ) : (
-                          <code className="bg-gray-700 px-1.5 py-0.5 rounded text-xs" {...props}>
+                          <code className="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-xs" {...props}>
                             {children}
                           </code>
                         );
@@ -263,10 +268,10 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
                         return <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>;
                       },
                       li({ children }) {
-                        return <li className="text-gray-300">{children}</li>;
+                        return <li className="text-soft">{children}</li>;
                       },
                       strong({ children }) {
-                        return <strong className="font-semibold text-white">{children}</strong>;
+                        return <strong className="font-semibold text-fg">{children}</strong>;
                       }
                     }}
                   >
@@ -279,11 +284,11 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
         ))}
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-gray-800 rounded-lg p-3">
+            <div className="rounded-lg border border-line bg-raised p-3">
               <div className="flex space-x-2">
-                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                <div className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
               </div>
             </div>
           </div>
@@ -292,29 +297,30 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-700 p-4">
+      <div className="border-t border-line p-3">
         <div className="flex space-x-2">
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
+            maxLength={4000}
             placeholder="Ask me anything about your code..."
-            className="flex-1 bg-gray-800 border border-gray-600 rounded-lg p-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-gray-500 resize-none"
+            className="flex-1 resize-none rounded border border-line bg-canvas p-2 text-sm text-fg placeholder-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             rows="2"
             disabled={isLoading}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center"
+            className="px-3 bg-accent hover:bg-accent-hover disabled:bg-raised disabled:text-muted disabled:cursor-not-allowed text-on-accent rounded transition-colors flex items-center justify-center"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           </button>
         </div>
-        <p className="text-xs text-gray-500 mt-2">
+        <p className="mt-2 font-mono text-[10px] text-muted">
           Press Enter to send, Shift+Enter for new line
         </p>
       </div>

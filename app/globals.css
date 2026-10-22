@@ -2,6 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* App palette as RGB channels so Tailwind opacity modifiers (e.g. text-fg/60) work. */
+:root {
+  color-scheme: dark;
+  --canvas: 13 14 14;         /* #0D0E0E app backdrop */
+  --surface: 19 20 19;        /* #131413 panels, editor */
+  --raised: 27 28 27;         /* #1B1C1B cards, controls */
+  --overlay: 41 42 41;        /* #292A29 hover planes */
+  --fg: 228 226 225;          /* #E4E2E1 primary text */
+  --soft: 194 200 197;        /* #C2C8C5 secondary text */
+  --muted: 140 146 143;       /* #8C928F metadata */
+  --accent: 111 211 168;      /* #6FD3A8 sage-mint */
+  --accent-hover: 138 224 187;/* #8AE0BB */
+  --on-accent: 10 31 26;      /* #0A1F1A */
+  --lavender: 198 196 218;    /* #C6C4DA */
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -16,30 +32,30 @@ body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  background: rgb(var(--canvas));
+  color: rgb(var(--fg));
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbar for better aesthetics */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e1e1e;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4a5568;
+  background: rgb(var(--overlay));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #5a6678;
+  background: rgb(var(--muted));
 }
 
 /* Animation utilities */

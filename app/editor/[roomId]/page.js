@@ -8,265 +8,524 @@ import { io } from 'socket.io-client';
 const Editor = dynamic(() => import('../../../components/Editor'), {
   ssr: false,
   loading: () => (
-    <div className="flex items-center justify-center h-full bg-gray-900">
-      <div className="text-gray-400 flex items-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mr-3"></div>
+    <div className="flex h-full items-center justify-center bg-surface">
+      <div className="flex items-center font-mono text-xs text-muted">
+        <div className="mr-3 h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-accent"></div>
         Loading editor...
       </div>
     </div>
-  )
+  ),
 });
 
-const AIChat = dynamic(() => import('../../../components/AIChat'), {
-  ssr: false
-});
+const AIChat = dynamic(() => import('../../../components/AIChat'), { ssr: false });
+
+// Leave NEXT_PUBLIC_SOCKET_URL unset to connect to the same origin that served the page.
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+const NAME_KEY = 'codesync:name';
+const TEMP_NOTICE_KEY = 'codesync:temp-notice-dismissed';
+
+const LANGUAGES = [
+  { value: 'javascript', label: 'JavaScript', ext: 'js' },
+  { value: 'typescript', label: 'TypeScript', ext: 'ts' },
+  { value: 'python', label: 'Python', ext: 'py' },
+  { value: 'java', label: 'Java', ext: 'java' },
+  { value: 'cpp', label: 'C++', ext: 'cpp' },
+  { value: 'html', label: 'HTML', ext: 'html' },
+  { value: 'css', label: 'CSS', ext: 'css' },
+  { value: 'json', label: 'JSON', ext: 'json' },
+];
+
+const ICONS = {
+  terminal: 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+  link: 'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1',
+  sparkles: 'M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z',
+  code: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
+  copy: 'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z',
+  check: 'M5 13l4 4L19 7',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  file: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+  bulb: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+  save: 'M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4',
+  upload: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12',
+  clock: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+  x: 'M6 18L18 6M6 6l12 12',
+};
+
+const MAX_UPLOAD_BYTES = 1024 * 1024;
+
+const Icon = ({ name, className = 'h-4 w-4' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={ICONS[name]} />
+  </svg>
+);
+
+// Same name always gets the same colour, so people keep their colour across visits.
+const colorFor = (name) => {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h}, 65%, 55%)`;
+};
+
+const initials = (name) =>
+  name.trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+
+const focus =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50';
+const btn = `inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2.5 text-sm font-medium transition-colors ${focus}`;
+const btnPrimary = `${btn} bg-accent font-semibold text-on-accent hover:bg-accent-hover`;
+const btnSecondary = `${btn} border border-line-strong bg-raised text-fg hover:bg-overlay`;
+const btnGhost = `${btn} text-muted hover:bg-white/5 hover:text-fg`;
+const eyebrow = 'font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-muted';
+
+function NameDialog({ onSubmit }) {
+  const [name, setName] = useState('');
+  const submit = (e) => {
+    e.preventDefault();
+    if (name.trim()) onSubmit(name.trim());
+  };
+  return (
+    <div
+      className="absolute inset-0 z-[60] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="name-title"
+    >
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm rounded-lg border border-line-strong bg-surface p-6 shadow-[0_12px_32px_-4px_rgba(0,0,0,0.6)]"
+      >
+        <p className={eyebrow}>Joining room</p>
+        <h2 id="name-title" className="mt-2 text-lg font-semibold tracking-[-0.015em]">What should we call you?</h2>
+        <p className="mt-1 text-sm text-muted">Others in the room see this name next to your cursor.</p>
+        <label htmlFor="display-name" className="sr-only">Your name</label>
+        <input
+          id="display-name"
+          autoFocus
+          maxLength={24}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Your name"
+          autoComplete="nickname"
+          className="mt-5 h-10 w-full rounded border border-line bg-canvas px-3 text-sm text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        <button
+          type="submit"
+          disabled={!name.trim()}
+          className={`${btnPrimary} mt-3 h-10 w-full justify-center disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          Join room
+        </button>
+      </form>
+    </div>
+  );
+}
 
 export default function EditorPage() {
   const params = useParams();
   const roomId = params.roomId;
+
+  const [profile, setProfile] = useState(undefined); // undefined = loading, null = needs a name
+  const [socket, setSocket] = useState(null);
+  const [connected, setConnected] = useState(false);
   const [users, setUsers] = useState([]);
   const [language, setLanguage] = useState('javascript');
-  const [socket, setSocket] = useState(null);
-  const [currentUser] = useState({
-    name: `User${Math.floor(Math.random() * 1000)}`,
-    color: `hsl(${Math.random() * 360}, 70%, 60%)`
-  });
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(null); // 'id' | 'link' | null
+  const [cursor, setCursor] = useState({ lineNumber: 1, column: 1 });
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // mobile only; always visible on md+
   const [currentCode, setCurrentCode] = useState('');
-  
+  const [baseName, setBaseName] = useState('untitled');
+  const [roomError, setRoomError] = useState(null);
+  const [showTempNotice, setShowTempNotice] = useState(false);
+
   // Refs for Monaco editor access from AIChat
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
+  const fileInputRef = useRef(null);
 
+  // Load the saved display name
   useEffect(() => {
-    const newSocket = io('http://localhost:3000');
-    setSocket(newSocket);
+    let name = null;
+    try {
+      name = localStorage.getItem(NAME_KEY);
+    } catch {}
+    setProfile(name ? { name, color: colorFor(name) } : null);
+    try {
+      setShowTempNotice(!localStorage.getItem(TEMP_NOTICE_KEY));
+    } catch {
+      setShowTempNotice(true);
+    }
+  }, []);
 
-    newSocket.emit('join-room', { roomId, user: currentUser });
+  const dismissTempNotice = () => {
+    setShowTempNotice(false);
+    try {
+      localStorage.setItem(TEMP_NOTICE_KEY, '1');
+    } catch {}
+  };
 
-    newSocket.on('users-update', (updatedUsers) => {
-      setUsers(updatedUsers);
+  const saveProfile = (name) => {
+    try {
+      localStorage.setItem(NAME_KEY, name);
+    } catch {}
+    setProfile({ name, color: colorFor(name) });
+  };
+
+  // Connect and join once we know who the user is
+  useEffect(() => {
+    if (!profile) return;
+    const s = io(SOCKET_URL);
+    setSocket(s);
+    // Rejoin on every (re)connect: the server forgets a socket's rooms when it drops.
+    s.on('connect', () => {
+      setConnected(true);
+      s.emit('join-room', { roomId, user: profile });
+    });
+    s.on('disconnect', () => setConnected(false));
+    s.on('users-update', setUsers);
+    s.on('file-meta', (meta) => {
+      if (LANGUAGES.some((l) => l.value === meta?.language)) setLanguage(meta.language);
+      if (typeof meta?.baseName === 'string') setBaseName(meta.baseName);
+    });
+    s.on('room-error', ({ message } = {}) => {
+      setRoomError(typeof message === 'string' ? message : 'You were disconnected from this room.');
+      s.disconnect();
     });
 
     return () => {
-      newSocket.disconnect();
+      s.disconnect();
+      setSocket(null);
+      setConnected(false);
+      setUsers([]);
     };
-  }, [roomId]);
+  }, [roomId, profile]);
 
-  const copyRoomId = () => {
-    navigator.clipboard.writeText(roomId);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  // Escape closes the AI drawer
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') setIsChatOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const copyText = async (text, key) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {}
   };
 
-  const getInitials = (name) => {
-    return name.slice(0, 2).toUpperCase();
+  const ext = LANGUAGES.find((l) => l.value === language)?.ext ?? language;
+  const languageLabel = LANGUAGES.find((l) => l.value === language)?.label ?? language;
+  const fileName = `${baseName}.${ext}`;
+  const people = [...users].sort((a, b) => (b.id === socket?.id) - (a.id === socket?.id));
+  const others = Math.max(0, users.length - 1);
+
+  const downloadFile = () => {
+    const content = editorRef.current?.getValue() ?? currentCode;
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const languages = [
-    { value: 'javascript', label: 'JavaScript' },
-    { value: 'typescript', label: 'TypeScript' },
-    { value: 'python', label: 'Python' },
-    { value: 'java', label: 'Java' },
-    { value: 'cpp', label: 'C++' },
-    { value: 'html', label: 'HTML' },
-    { value: 'css', label: 'CSS' },
-    { value: 'json', label: 'JSON' },
-  ];
+  // Ctrl/Cmd+S downloads the file instead of the browser's "save page"
+  const downloadRef = useRef(downloadFile);
+  downloadRef.current = downloadFile;
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        downloadRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const uploadFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // lets the same file be picked again
+    const editor = editorRef.current;
+    if (!file || !editor) return;
+
+    const dot = file.name.lastIndexOf('.');
+    const match = LANGUAGES.find((l) => l.ext === file.name.slice(dot + 1).toLowerCase());
+    if (dot <= 0 || !match) {
+      alert(`Unsupported file type. Supported: ${LANGUAGES.map((l) => '.' + l.ext).join(', ')}`);
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      alert('File is too large (max 1 MB).');
+      return;
+    }
+
+    const text = await file.text();
+    if (text.includes('\u0000')) {
+      alert('That looks like a binary file, not code.');
+      return;
+    }
+    if (editor.getValue().trim() && !confirm(`Replace the current code with ${file.name}? This changes it for everyone in the room.`)) {
+      return;
+    }
+
+    // executeEdits (not setValue) keeps undo history and syncs through the Yjs binding.
+    editor.executeEdits('upload', [{ range: editor.getModel().getFullModelRange(), text }]);
+    editor.pushUndoStop();
+    setLanguage(match.value);
+    setBaseName(file.name.slice(0, dot));
+    socket?.emit('file-meta', { roomId, meta: { language: match.value, baseName: file.name.slice(0, dot) } });
+  };
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-row bg-gray-900">
-      {/* Sidebar */}
-      <div className="w-60 bg-gray-800 border-r border-gray-700 flex flex-col">
-        {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-700">
-          <div className="flex items-center mb-4">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-              </svg>
+    <div className="relative flex h-screen w-screen overflow-hidden bg-canvas text-fg">
+      {profile === null && <NameDialog onSubmit={saveProfile} />}
+      {roomError && (
+        <div
+          className="absolute inset-0 z-[60] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="room-error-title"
+        >
+          <div className="w-full max-w-sm rounded-lg border border-line-strong bg-surface p-6 shadow-[0_12px_32px_-4px_rgba(0,0,0,0.6)]">
+            <p className={eyebrow}>Can&apos;t join</p>
+            <h2 id="room-error-title" className="mt-2 text-lg font-semibold tracking-[-0.015em]">{roomError}</h2>
+            <div className="mt-5 flex gap-2">
+              <a href="/" className={`${btnPrimary} h-10 flex-1 justify-center`}>Start a new room</a>
+              <button onClick={() => window.location.reload()} className={`${btnSecondary} h-10 flex-1 justify-center`}>
+                Try again
+              </button>
             </div>
-            <span className="ml-2 font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600">
-              CodeSync
-            </span>
           </div>
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-            Connected Users
-          </h2>
+        </div>
+      )}
+
+      {/* Mobile backdrop for the sidebar */}
+      {sidebarOpen && (
+        <div className="absolute inset-0 z-20 bg-black/60 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={`absolute inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-line bg-canvas transition-transform duration-200 md:static md:translate-x-0 md:border-r-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex h-14 shrink-0 items-center px-4">
+          <a href="/" className={`flex items-center gap-2 rounded font-semibold tracking-tight ${focus}`}>
+            <span className="grid h-6 w-6 place-items-center rounded bg-accent text-on-accent">
+              <Icon name="terminal" className="h-3.5 w-3.5" />
+            </span>
+            CodeSync
+          </a>
         </div>
 
-        {/* Users List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {users.length === 0 ? (
-            <div className="text-gray-500 text-sm text-center py-4">
-              Waiting for users...
-            </div>
-          ) : (
-            users.map((user) => (
-              <div
-                key={user.id}
-                className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-700 transition-colors"
+        <div className="flex-1 space-y-6 overflow-y-auto px-3 pb-3">
+          <section className="rounded-lg border border-line bg-surface p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className={eyebrow}>Room</h2>
+              <span
+                className={`flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] ${connected ? 'text-accent' : 'text-muted'}`}
+                role="status"
               >
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm shadow-lg"
-                  style={{ backgroundColor: user.color }}
-                >
-                  {getInitials(user.name)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-gray-300 text-sm font-medium truncate">
-                    {user.name}
-                    {user.id === socket?.id && (
-                      <span className="ml-2 text-xs text-blue-400">(You)</span>
-                    )}
-                  </p>
-                  <p className="text-gray-500 text-xs">
-                    {user.id === socket?.id ? 'Online' : 'Active'}
-                  </p>
-                </div>
-                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Copy Room ID Button */}
-        <div className="p-4 border-t border-gray-700">
-          <button
-            onClick={copyRoomId}
-            className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md transition-colors font-medium text-sm flex items-center justify-center group"
-          >
-            {copied ? (
-              <>
-                <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Copied!
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4 mr-2 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                Copy Room ID
-              </>
-            )}
-          </button>
-          <p className="text-gray-500 text-xs mt-2 text-center truncate">
-            {roomId}
-          </p>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Top Bar */}
-        <div className="h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4">
-          {/* Left: File Info */}
-          <div className="flex items-center space-x-3">
-            <div className="flex items-center space-x-2">
-              <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span className="text-gray-300 font-medium text-sm">
-                untitled.{language === 'javascript' ? 'js' : language === 'typescript' ? 'ts' : language === 'python' ? 'py' : language}
+                <span className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-accent' : 'animate-pulse bg-muted'}`} />
+                {connected ? 'Live' : 'Connecting'}
               </span>
             </div>
-            <div className="h-4 w-px bg-gray-700"></div>
-            <span className="text-gray-500 text-xs">
-              Room: {roomId.slice(0, 8)}...
-            </span>
-          </div>
-
-          {/* Right: Controls */}
-          <div className="flex items-center space-x-3">
-            {/* Language Selector */}
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-300 cursor-pointer"
-            >
-              {languages.map((lang) => (
-                <option key={lang.value} value={lang.value}>
-                  {lang.label}
-                </option>
-              ))}
-            </select>
-
-            {/* AI Chat Toggle */}
+            <div className="flex items-center gap-2 rounded border border-line bg-canvas py-1.5 pl-2.5 pr-1.5">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-soft" title={roomId}>{roomId}</span>
+              <button
+                onClick={() => copyText(roomId, 'id')}
+                aria-label="Copy room ID"
+                className={`rounded p-1 text-muted hover:bg-white/5 hover:text-fg ${focus}`}
+              >
+                <Icon name={copied === 'id' ? 'check' : 'copy'} className={`h-3.5 w-3.5 ${copied === 'id' ? 'text-accent' : ''}`} />
+              </button>
+            </div>
             <button
-              onClick={() => setIsChatOpen(!isChatOpen)}
-              className={`px-4 py-1.5 ${
-                isChatOpen 
-                  ? 'bg-purple-600 hover:bg-purple-500' 
-                  : 'bg-gray-700 hover:bg-gray-600'
-              } text-white rounded-md transition-colors text-sm font-medium flex items-center`}
+              onClick={() => copyText(window.location.href, 'link')}
+              className={`${btnSecondary} mt-2 w-full justify-center text-xs`}
             >
-              <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-              AI Assistant
+              <Icon name={copied === 'link' ? 'check' : 'link'} className={`h-3.5 w-3.5 ${copied === 'link' ? 'text-accent' : ''}`} />
+              {copied === 'link' ? 'Link copied' : 'Copy invite link'}
             </button>
+          </section>
 
-            {/* Save Button */}
-            <button className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors text-sm font-medium flex items-center">
-              <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-              </svg>
-              Save
-            </button>
-          </div>
+          <section>
+            <h2 className={`${eyebrow} mb-2 px-1`}>In this room ({users.length})</h2>
+            {users.length === 0 ? (
+              <p className="px-1 py-2 text-sm text-muted">{connected ? 'No one here yet.' : 'Connecting…'}</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {people.map((u) => (
+                  <li key={u.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2.5">
+                    <span
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold text-canvas"
+                      style={{ backgroundColor: u.color }}
+                    >
+                      {initials(u.name)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm">{u.name}</span>
+                    {u.id === socket?.id && <span className={eyebrow}>You</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
+      </aside>
 
-{/* Editor + AI Chat Container */}
-<div className="relative flex-1 overflow-hidden">
+      {/* Main */}
+      <main className="flex min-w-0 flex-1 flex-col md:py-2 md:pr-2">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-line bg-surface md:rounded-lg md:border">
+          <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-line px-2 sm:px-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Show people in this room"
+                className={`${btnGhost} px-1.5 md:hidden`}
+              >
+                <Icon name="menu" className="h-5 w-5" />
+              </button>
+              <span className="flex min-w-0 items-center gap-2 rounded border border-line bg-raised px-2.5 py-1">
+                <span className="font-mono text-[10px] font-semibold uppercase text-accent">{ext}</span>
+                <span className="truncate text-sm">{fileName}</span>
+              </span>
+              <span
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-lavender/25 bg-lavender/10 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-lavender"
+                title="Nothing is stored. The room is deleted 2 minutes after everyone leaves — use Save to keep a copy."
+              >
+                <Icon name="clock" className="h-3 w-3" />
+                <span className="hidden sm:inline">Temporary</span>
+                <span className="sr-only sm:hidden">Temporary room</span>
+              </span>
+            </div>
 
-  {/* Editor Area */}
-  <div className="absolute inset-0">
-    {socket && (
-      <Editor
-        roomId={roomId}
-        socket={socket}
-        currentUser={currentUser}
-        language={language}
-        editorRef={editorRef}
-        monacoRef={monacoRef}
-        onCodeChange={setCurrentCode}
-      />
-    )}
-  </div>
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <select
+                aria-label="Language"
+                value={language}
+                onChange={(e) => {
+                  setLanguage(e.target.value);
+                  socket?.emit('file-meta', { roomId, meta: { language: e.target.value, baseName } });
+                }}
+                className={`h-8 cursor-pointer rounded border border-line-strong bg-raised px-2 text-sm text-fg ${focus}`}
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l.value} value={l.value}>{l.label}</option>
+                ))}
+              </select>
 
-  {/* BACKDROP (blur + fade) */}
-  {isChatOpen && (
-    <div
-      className="absolute inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity duration-300"
-      onClick={() => setIsChatOpen(false)}
-    />
-  )}
+              <button
+                onClick={() => setIsChatOpen((o) => !o)}
+                aria-pressed={isChatOpen}
+                className={isChatOpen ? `${btn} border border-accent/40 bg-accent/10 text-accent` : btnGhost}
+              >
+                <Icon name="sparkles" />
+                <span className="hidden lg:inline">AI assistant</span>
+              </button>
 
-  {/* AI Chat Drawer (slide-in, overlay) */}
-  <div
-    className={`
-      absolute top-0 right-0 h-full w-80 md:w-80 z-50 shadow-2xl
-      bg-gray-900 border-l border-gray-700
-      transform transition-transform duration-300 ease-out
-      ${isChatOpen ? "translate-x-0" : "translate-x-full"}
-    `}
-  >
-    <AIChat
-      editorRef={editorRef}
-      monacoRef={monacoRef}
-      currentCode={currentCode}
-      language={language}
-      isOpen={isChatOpen}
-      onClose={() => setIsChatOpen(false)}
-    />
-  </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={LANGUAGES.map((l) => '.' + l.ext).join(',')}
+                onChange={uploadFile}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Open a file from your computer"
+                className={btnSecondary}
+              >
+                <Icon name="upload" />
+                <span className="hidden sm:inline">Open</span>
+              </button>
+              <button onClick={downloadFile} title={`Download ${fileName}`} className={btnPrimary}>
+                <Icon name="save" />
+                <span className="hidden sm:inline">Save</span>
+              </button>
+            </div>
+          </header>
 
-</div>
+          {showTempNotice && (
+            <div className="flex shrink-0 items-center gap-2 border-b border-line bg-lavender/[0.06] px-3 py-1.5 text-xs text-soft" role="note">
+              <Icon name="clock" className="h-3.5 w-3.5 shrink-0 text-lavender" />
+              <p className="min-w-0 flex-1">
+                <span className="font-medium text-fg">Nothing here is saved.</span>{' '}
+                This room is deleted 2 minutes after everyone leaves — use{' '}
+                <button onClick={downloadFile} className={`rounded font-medium text-accent underline-offset-2 hover:underline ${focus}`}>
+                  Save
+                </button>{' '}
+                to download your code.
+              </p>
+              <button
+                onClick={dismissTempNotice}
+                aria-label="Dismiss"
+                className={`shrink-0 rounded p-1 text-muted hover:bg-white/5 hover:text-fg ${focus}`}
+              >
+                <Icon name="x" className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
 
-      </div>
+          {/* Editor + AI chat */}
+          <div className="relative flex-1 overflow-hidden">
+            <div className="absolute inset-0">
+              {socket && profile && (
+                <Editor
+                  roomId={roomId}
+                  socket={socket}
+                  currentUser={profile}
+                  language={language}
+                  editorRef={editorRef}
+                  monacoRef={monacoRef}
+                  onCodeChange={setCurrentCode}
+                  onCursorChange={setCursor}
+                />
+              )}
+            </div>
+
+            {isChatOpen && (
+              <div
+                className="absolute inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300"
+                onClick={() => setIsChatOpen(false)}
+              />
+            )}
+
+            <div
+              className={`absolute right-0 top-0 z-50 h-full w-80 max-w-full transform border-l border-line-strong bg-surface shadow-[0_12px_32px_-4px_rgba(0,0,0,0.6)] transition-transform duration-300 ease-out ${
+                isChatOpen ? 'translate-x-0' : 'translate-x-full'
+              }`}
+            >
+              <AIChat
+                editorRef={editorRef}
+                monacoRef={monacoRef}
+                currentCode={currentCode}
+                language={language}
+                isOpen={isChatOpen}
+                onClose={() => setIsChatOpen(false)}
+              />
+            </div>
+          </div>
+
+          <footer className="flex h-7 shrink-0 items-center justify-between gap-4 border-t border-line px-3 font-mono text-[11px] text-muted">
+            <span className="flex items-center gap-4">
+              <span>{languageLabel}</span>
+              <span className="hidden sm:inline">UTF-8</span>
+              <span className="hidden sm:inline">Spaces: 2</span>
+              <span>Ln {cursor.lineNumber}, Col {cursor.column}</span>
+            </span>
+            <span className="flex items-center gap-1.5 truncate">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${connected ? 'bg-accent' : 'animate-pulse bg-muted'}`} />
+              {!connected ? 'Connecting…' : others === 0 ? 'Only you here' : `${others} other${others === 1 ? '' : 's'} here`}
+            </span>
+          </footer>
+        </div>
+      </main>
     </div>
   );
 }

@@ -9,31 +9,30 @@
     "lint": "next lint"
   },
   "dependencies": {
-   "next": "^14.0.4",
+    "@google/generative-ai": "^0.21.0",
+    "@monaco-editor/react": "^4.6.0",
+    "dotenv": "^18.0.8",
+    "express": "^4.18.2",
+    "geist": "^1.8.2",
+    "monaco-editor": "^0.45.0",
+    "nanoid": "^5.0.4",
+    "next": "^14.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "express": "^4.18.2",
+    "react-markdown": "^9.0.1",
+    "react-syntax-highlighter": "^15.5.0",
+    "remark-gfm": "^4.0.0",
     "socket.io": "^4.6.1",
     "socket.io-client": "^4.6.1",
-    "yjs": "^13.6.10",
-    "y-websocket": "^1.5.0",
-    "y-protocols": "^1.0.6",
-    "mongoose": "^8.0.3",
-    "@monaco-editor/react": "^4.6.0",
-    "monaco-editor": "^0.45.0",
     "y-monaco": "^0.1.4",
-    "lib0": "^0.2.89",
-    "nanoid": "^5.0.4",
-    "@google/generative-ai": "^0.21.0",
-    "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
-    "react-syntax-highlighter": "^15.5.0"
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.10"
   },
   "devDependencies": {
     "autoprefixer": "^10.0.1",
-    "postcss": "^8",
-    "tailwindcss": "^3.3.0",
     "eslint": "^8",
-    "eslint-config-next": "14.0.4"
+    "eslint-config-next": "14.0.4",
+    "postcss": "^8",
+    "tailwindcss": "^3.3.0"
   }
 }

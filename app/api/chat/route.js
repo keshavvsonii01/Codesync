@@ -1,22 +1,45 @@
 import { GoogleGenerativeAI, StreamingMode } from "@google/generative-ai";
 
+const MAX_BODY_BYTES = 600_000;
+const MAX_MESSAGE_CHARS = 4_000;
+const MAX_CODE_CHARS = 100_000;
+
+const text = (body, status) =>
+  new Response(body, { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+
 export async function POST(req) {
   try {
+    if (Number(req.headers.get("content-length")) > MAX_BODY_BYTES) {
+      return text("Request too large.", 413);
+    }
+
     const { messages, currentEditorCode, language } = await req.json();
 
     if (!messages || !Array.isArray(messages)) {
-      return new Response("Invalid request body: messages[] missing", {
-        status: 400,
-      });
+      return text("Invalid request body: messages[] missing", 400);
     }
 
     // Last user message is what we respond to
-    const latestMessage = messages[messages.length - 1]?.content || "";
+    const latestMessage = messages[messages.length - 1]?.content;
+    if (typeof latestMessage !== "string" || !latestMessage.trim()) {
+      return text("Message is empty.", 400);
+    }
+    if (latestMessage.length > MAX_MESSAGE_CHARS) {
+      return text(`Message is too long (max ${MAX_MESSAGE_CHARS} characters).`, 413);
+    }
+
+    const safeLanguage = typeof language === "string" && /^[a-z+#]{1,20}$/.test(language) ? language : "plaintext";
+    const code = typeof currentEditorCode === "string" ? currentEditorCode.slice(0, MAX_CODE_CHARS) : "";
+
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY is not set");
+      return text("The AI assistant isn't available right now.", 503);
+    }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-3.5-flash-lite",
       systemInstruction: `
 You are an AI coding assistant inside a collaborative code editor.
 
@@ -33,10 +56,10 @@ Rules:
 User message:
 ${latestMessage}
 
-Language: ${language}
+Language: ${safeLanguage}
 
 Current editor code:
-${currentEditorCode || "(empty)"}
+${code || "(empty)"}
     `;
 
     // Create streaming API call
@@ -71,6 +94,6 @@ ${currentEditorCode || "(empty)"}
     });
   } catch (error) {
     console.error("Chat API Error:", error);
-    return new Response("AI Error: " + error.message, { status: 500 });
+    return text("The AI assistant hit an error. Please try again.", 500);
   }
 }

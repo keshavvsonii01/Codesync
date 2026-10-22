@@ -8,9 +8,27 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        'editor-bg': '#1e1e1e',
-        'sidebar-bg': '#252526',
-        'topbar-bg': '#2d2d30',
+        canvas: 'rgb(var(--canvas) / <alpha-value>)',
+        surface: 'rgb(var(--surface) / <alpha-value>)',
+        raised: 'rgb(var(--raised) / <alpha-value>)',
+        overlay: 'rgb(var(--overlay) / <alpha-value>)',
+        fg: 'rgb(var(--fg) / <alpha-value>)',
+        soft: 'rgb(var(--soft) / <alpha-value>)',
+        muted: 'rgb(var(--muted) / <alpha-value>)',
+        accent: {
+          DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
+          hover: 'rgb(var(--accent-hover) / <alpha-value>)',
+        },
+        'on-accent': 'rgb(var(--on-accent) / <alpha-value>)',
+        lavender: 'rgb(var(--lavender) / <alpha-value>)',
+        line: {
+          DEFAULT: 'rgb(255 255 255 / 0.08)',
+          strong: 'rgb(255 255 255 / 0.14)',
+        },
+      },
+      fontFamily: {
+        sans: ['var(--font-geist-sans)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
     },
   },
