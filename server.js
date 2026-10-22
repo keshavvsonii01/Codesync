@@ -13,6 +13,9 @@ const port = parseInt(process.env.PORT, 10) || 3000;
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
+// Room IDs work as access keys and names are personal, so activity is only logged in dev.
+const devLog = dev ? console.log : () => {};
+
 // Rooms live only in memory and are deleted this long after the last person leaves.
 const ROOM_GRACE_MS = 2 * 60 * 1000;
 
@@ -43,7 +46,7 @@ const scheduleRoomDeletion = (roomId) => {
   room.expiry = setTimeout(() => {
     room.doc.destroy();
     rooms.delete(roomId);
-    console.log(`🗑️  Room ${roomId} expired`);
+    devLog(`🗑️  Room ${roomId} expired`);
   }, ROOM_GRACE_MS);
 };
 
@@ -125,7 +128,7 @@ app.prepare().then(() => {
 
   // Socket.io connection handling
   io.on('connection', (socket) => {
-    console.log('🔌 Client connected:', socket.id);
+    devLog('🔌 Client connected:', socket.id);
 
     let tokens = EVENT_BURST;
     let lastRefill = Date.now();
@@ -172,7 +175,7 @@ app.prepare().then(() => {
       io.to(roomId).emit('users-update', Array.from(room.users.values()));
       socket.emit('file-meta', room.meta);
 
-      console.log(`👤 ${profile.name} joined room: ${roomId}`);
+      devLog(`👤 ${profile.name} joined room: ${roomId}`);
     });
 
     // Sent by the editor once it's ready, so the reply can't arrive before it is listening.
@@ -195,7 +198,7 @@ app.prepare().then(() => {
 
       // Updates can't be un-applied, so an oversized room is closed rather than trimmed.
       if (room.doc.getText('monaco').length > MAX_DOC_CHARS) {
-        console.warn(`Room ${roomId} exceeded ${MAX_DOC_CHARS} characters; closing it`);
+        console.warn(`A room exceeded ${MAX_DOC_CHARS} characters; closing it`);
         io.to(roomId).emit('room-error', { message: 'This room got too large (over 1 million characters) and was closed.' });
         io.in(roomId).socketsLeave(roomId);
         deleteRoom(roomId);
@@ -234,7 +237,7 @@ app.prepare().then(() => {
     });
 
     socket.on('disconnect', () => {
-      console.log('🔌 Client disconnected:', socket.id);
+      devLog('🔌 Client disconnected:', socket.id);
 
       for (const [roomId, room] of rooms) {
         if (!room.users.delete(socket.id)) continue;

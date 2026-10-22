@@ -14,6 +14,12 @@ const ICONS = {
   code: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
   chat: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
   pencil: 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z',
+  user: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
+  database: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
+  eyeOff: 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21',
+  download: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4',
+  shield: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+  info: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
 };
 
 const Icon = ({ name, className = 'h-4 w-4' }) => (
@@ -120,7 +126,7 @@ function LiveEditor({ roomId }) {
       </div>
       <div className="flex h-8 items-center justify-between border-t border-line px-4 font-mono text-[11px] text-muted">
         <span className="flex items-center gap-3">
-          <span className="text-accent">Saved</span>
+          <span className="text-accent">Live</span>
           <span>JavaScript</span>
         </span>
         <span>Ln 4, Col {a.length + 5}</span>
@@ -147,6 +153,26 @@ const USES = [
   },
 ];
 
+const LIFECYCLE = [
+  { step: '01', title: 'Open a room', text: 'You get a link. No sign-up, no email.' },
+  { step: '02', title: 'Code together', text: 'Edits sync live and are held only in memory.' },
+  { step: '03', title: 'Everyone leaves', text: 'A 2-minute grace period covers refreshes and dropped Wi-Fi.' },
+  { step: '04', title: 'It’s gone', text: 'The room and its code are deleted. No copies, no history.' },
+];
+
+const PRIVACY = [
+  { icon: 'user', title: 'No accounts', text: 'Just pick a display name. It stays in your browser.' },
+  { icon: 'database', title: 'No database', text: 'Your code is never written to disk. There’s nothing to breach.' },
+  { icon: 'eyeOff', title: 'No tracking', text: 'No analytics, no ad scripts, no profiles of what you write.' },
+  { icon: 'download', title: 'Your code, your copy', text: 'Save downloads the file straight to your machine.' },
+];
+
+const FINE_PRINT = [
+  'The AI assistant is optional. When you use it, your question and the current code are sent to Google Gemini.',
+  'The room link is the key. Anyone who has it can join and edit, so share it like a password.',
+  'While a room is open its code sits in server memory so it can sync — it isn’t end-to-end encrypted.',
+];
+
 export default function Home() {
   const router = useRouter();
   const [roomId, setRoomId] = useState('');
@@ -171,6 +197,9 @@ export default function Home() {
       <header className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <Logo />
         <nav className="flex items-center gap-2">
+          <a href="#privacy" className={`${btn} hidden h-8 px-3 font-medium text-muted hover:bg-white/5 hover:text-fg sm:inline-flex`}>
+            Privacy
+          </a>
           <a href={GITHUB_URL} className={`${btn} h-8 px-3 font-medium text-muted hover:bg-white/5 hover:text-fg`}>
             GitHub
           </a>
@@ -191,7 +220,7 @@ export default function Home() {
             Write code together, in the same file.
           </h1>
           <p className="mx-auto mt-5 max-w-[52ch] text-base leading-relaxed text-soft sm:text-lg">
-            Open a room, share the link, and edit side by side. Everyone’s changes merge as they type, and the room can be saved at any time.
+            Open a room, share the link, and edit side by side. No accounts, nothing stored — when everyone leaves, the room disappears.
           </p>
 
           <form
@@ -217,10 +246,14 @@ export default function Home() {
               Join
             </button>
           </form>
-          <p className="mt-4 flex items-center justify-center gap-2 text-sm text-muted">
-            <Icon name="check" className="h-4 w-4 text-accent" />
-            No sign-up. Anyone with the link can edit.
-          </p>
+          <ul className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-muted">
+            {['No sign-up', 'Nothing stored', 'Gone when you leave'].map((t) => (
+              <li key={t} className="flex items-center gap-1.5">
+                <Icon name="check" className="h-4 w-4 text-accent" />
+                {t}
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section className="mx-auto max-w-4xl px-6 pb-24">
@@ -245,6 +278,60 @@ export default function Home() {
           </div>
         </section>
 
+        <section id="privacy" className="mx-auto max-w-6xl scroll-mt-6 px-6 pb-24">
+          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-lavender">Private by design</p>
+          <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em] sm:text-3xl">
+            We can’t leak what we never keep.
+          </h2>
+          <p className="mt-3 max-w-[60ch] text-soft">
+            CodeSync has no accounts and no database. Your code exists only while your room is open — then it’s gone for good.
+          </p>
+
+          <ol className="mt-10 grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+            {LIFECYCLE.map((s, i) => {
+              const last = i === LIFECYCLE.length - 1;
+              return (
+                <li key={s.step} className={`p-5 ${last ? 'bg-lavender/[0.06]' : 'bg-surface'}`}>
+                  <span className={`font-mono text-[11px] font-semibold ${last ? 'text-lavender' : 'text-accent'}`}>{s.step}</span>
+                  <p className="mt-2 font-medium">{s.title}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted">{s.text}</p>
+                </li>
+              );
+            })}
+          </ol>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr_minmax(0,1.1fr)]">
+            <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
+              {PRIVACY.map((p) => (
+                <div key={p.title} className="flex gap-4 rounded-lg border border-line bg-surface p-5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-line bg-raised text-accent">
+                    <Icon name={p.icon} />
+                  </span>
+                  <div>
+                    <h3 className="font-medium">{p.title}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-soft">{p.text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-lg border border-line-strong bg-raised p-5">
+              <p className="flex items-center gap-2 font-medium">
+                <Icon name="info" className="h-4 w-4 text-lavender" />
+                The fine print, in plain words
+              </p>
+              <ul className="mt-3 space-y-3">
+                {FINE_PRINT.map((t) => (
+                  <li key={t} className="flex gap-2.5 text-sm leading-relaxed text-soft">
+                    <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-muted" />
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+
         <section className="mx-auto max-w-6xl px-6 pb-24">
           <div className="flex flex-col gap-4 rounded-lg border border-line bg-surface p-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
@@ -253,7 +340,7 @@ export default function Home() {
               </span>
               <div>
                 <p className="font-medium">Ready when you are</p>
-                <p className="text-sm text-muted">Open a room and send the link. That’s the whole setup.</p>
+                <p className="text-sm text-muted">Open a room and send the link. When you’re done, it’s gone.</p>
               </div>
             </div>
             <button onClick={createNewRoom} className={`${btnPrimary} h-10 px-4`}>
@@ -265,8 +352,12 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 text-sm text-muted">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 px-6 py-6 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
           <Logo />
+          <p className="flex items-center gap-2">
+            <Icon name="shield" className="h-4 w-4 text-accent" />
+            No accounts · No database · No tracking
+          </p>
           <a href={GITHUB_URL} className={`rounded hover:text-fg ${focus}`}>Source on GitHub</a>
         </div>
       </footer>

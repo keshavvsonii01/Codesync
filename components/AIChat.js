@@ -323,6 +323,9 @@ export default function AIChat({ editorRef, monacoRef, currentCode, language, is
         <p className="mt-2 font-mono text-[10px] text-muted">
           Press Enter to send, Shift+Enter for new line
         </p>
+        <p className="mt-1 text-[11px] leading-snug text-muted">
+          Your question and the current code are sent to Google Gemini to generate a reply.
+        </p>
       </div>
     </div>
   );
