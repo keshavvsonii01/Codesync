@@ -4,7 +4,8 @@ import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
 
 export default function Editor({ 
-  roomId, 
+  roomId,
+  fileId = 'main',
   socket, 
   currentUser, 
   language, 
@@ -21,6 +22,9 @@ export default function Editor({
   const remoteCursorsRef = useRef(new Map());
   const usersHandlerRef = useRef(null);
   const connectHandlerRef = useRef(null);
+  const syncHandlerRef = useRef(null);
+  const awarenessHandlerRef = useRef(null);
+  const cursorHandlerRef = useRef(null);
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -42,9 +46,10 @@ export default function Editor({
 
     // Create a simple awareness implementation
     class SimpleAwareness {
-  constructor(socket, roomId, clientID) {
+  constructor(socket, roomId, fileId, clientID) {
     this.socket = socket;
     this.roomId = roomId;
+    this.fileId = fileId;
     this.clientID = clientID;
 
     this.states = new Map();
@@ -81,6 +86,7 @@ export default function Editor({
 
     this.socket.emit("yjs-awareness", {
       roomId: this.roomId,
+      fileId: this.fileId,
       update: { clientID: this.clientID, state }
     });
 
@@ -98,7 +104,7 @@ export default function Editor({
   }
 }
 
- const awareness = new SimpleAwareness(socket, roomId, socket.id);
+ const awareness = new SimpleAwareness(socket, roomId, fileId, socket.id);
 
 
     awarenessRef.current = awareness;
@@ -117,34 +123,39 @@ export default function Editor({
       awareness
     );
     bindingRef.current = binding;
+    onCodeChange?.(editor.getValue());
 
     // Handle Yjs updates from this client
     ydoc.on('update', (update, origin) => {
       if (origin === 'remote') return;
-      socket.emit('yjs-sync', { roomId, update: Array.from(update) });
+      socket.emit('yjs-sync', { roomId, fileId, update: Array.from(update) });
     });
 
     // Handle incoming Yjs updates from other clients
-    socket.on('yjs-sync', ({ update }) => {
-      Y.applyUpdate(ydoc, new Uint8Array(update), 'remote');
-    });
+    syncHandlerRef.current = ({ fileId: incomingFileId = 'main', update } = {}) => {
+      if (incomingFileId !== fileId || !Array.isArray(update)) return;
+      try { Y.applyUpdate(ydoc, new Uint8Array(update), 'remote'); } catch (error) { console.warn('Ignored invalid Yjs update', error); }
+    };
+    socket.on('yjs-sync', syncHandlerRef.current);
 
     // Pull the room's current text, and push ours in case the server restarted and lost it.
     const syncWithServer = () => {
       if (!socket.connected) return;
-      socket.emit('yjs-request-state', { roomId });
-      socket.emit('yjs-sync', { roomId, update: Array.from(Y.encodeStateAsUpdate(ydoc)) });
+      socket.emit('yjs-request-state', { roomId, fileId });
+      socket.emit('yjs-sync', { roomId, fileId, update: Array.from(Y.encodeStateAsUpdate(ydoc)) });
     };
     syncWithServer();
     connectHandlerRef.current = syncWithServer;
     socket.on('connect', syncWithServer);
 
     // Handle incoming awareness updates
-    socket.on('yjs-awareness', ({ update }) => {
-      if (update.clientID !== socket.id) {
+    awarenessHandlerRef.current = ({ fileId: incomingFileId = 'main', update } = {}) => {
+      if (incomingFileId === fileId && update?.clientID !== socket.id && update?.clientID) {
         awareness.states.set(update.clientID, update.state);
+        awareness.notify('change');
       }
-    });
+    };
+    socket.on('yjs-awareness', awarenessHandlerRef.current);
 
     // Listen for cursor position changes
     editor.onDidChangeCursorPosition((e) => {
@@ -152,6 +163,7 @@ export default function Editor({
       onCursorChange?.({ lineNumber: position.lineNumber, column: position.column });
       socket.emit('cursor-position', {
         roomId,
+        fileId,
         position: {
           lineNumber: position.lineNumber,
           column: position.column
@@ -161,9 +173,11 @@ export default function Editor({
     });
 
     // Handle remote cursor updates
-    socket.on('remote-cursor', ({ userId, position, user }) => {
+    cursorHandlerRef.current = ({ fileId: incomingFileId = 'main', userId, position, user } = {}) => {
+      if (incomingFileId !== fileId || !position || !user) return;
       upsertRemoteCursor(editor, monaco, userId, position, user);
-    });
+    };
+    socket.on('remote-cursor', cursorHandlerRef.current);
 
     // Drop carets of people who left the room
     usersHandlerRef.current = (users) => {
@@ -249,9 +263,9 @@ export default function Editor({
       
       // Remove socket listeners
       if (socket) {
-        socket.off('yjs-sync');
-        socket.off('yjs-awareness');
-        socket.off('remote-cursor');
+        if (syncHandlerRef.current) socket.off('yjs-sync', syncHandlerRef.current);
+        if (awarenessHandlerRef.current) socket.off('yjs-awareness', awarenessHandlerRef.current);
+        if (cursorHandlerRef.current) socket.off('remote-cursor', cursorHandlerRef.current);
         if (usersHandlerRef.current) socket.off('users-update', usersHandlerRef.current);
         if (connectHandlerRef.current) socket.off('connect', connectHandlerRef.current);
       }

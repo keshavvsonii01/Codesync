@@ -128,7 +128,9 @@ export default function EditorPage() {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const [users, setUsers] = useState([]);
-  const [language, setLanguage] = useState('javascript');
+  const [files, setFiles] = useState([{ id: 'main', name: 'index.js', language: 'javascript' }]);
+  const [activeFileId, setActiveFileId] = useState('main');
+  const [fileOperationError, setFileOperationError] = useState(null);
   const [copied, setCopied] = useState(null); // 'id' | 'link' | null
   const [cursor, setCursor] = useState({ lineNumber: 1, column: 1 });
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -183,16 +185,24 @@ export default function EditorPage() {
     });
     s.on('disconnect', () => setConnected(false));
     s.on('users-update', setUsers);
-    s.on('file-meta', (meta) => {
-      if (LANGUAGES.some((l) => l.value === meta?.language)) setLanguage(meta.language);
-      if (typeof meta?.baseName === 'string') setBaseName(meta.baseName);
-    });
+    const onProjectFiles = ({ files: nextFiles } = {}) => {
+      if (!Array.isArray(nextFiles) || nextFiles.length === 0) return;
+      setFiles(nextFiles);
+      setActiveFileId((current) => nextFiles.some((file) => file.id === current) ? current : nextFiles[0].id);
+    };
+    const onFileOperationError = ({ message } = {}) => {
+      setFileOperationError(typeof message === 'string' ? message : 'That file operation could not be completed.');
+    };
+    s.on('project-files', onProjectFiles);
+    s.on('file-operation-error', onFileOperationError);
     s.on('room-error', ({ message } = {}) => {
       setRoomError(typeof message === 'string' ? message : 'You were disconnected from this room.');
       s.disconnect();
     });
 
     return () => {
+      s.off('project-files', onProjectFiles);
+      s.off('file-operation-error', onFileOperationError);
       s.disconnect();
       setSocket(null);
       setConnected(false);
@@ -217,9 +227,16 @@ export default function EditorPage() {
     } catch {}
   };
 
+  const activeFile = files.find((file) => file.id === activeFileId) || files[0];
+  const language = activeFile?.language || 'javascript';
   const ext = LANGUAGES.find((l) => l.value === language)?.ext ?? language;
   const languageLabel = LANGUAGES.find((l) => l.value === language)?.label ?? language;
-  const fileName = `${baseName}.${ext}`;
+  const fileName = activeFile?.name || `${baseName}.${ext}`;
+  useEffect(() => {
+    if (!activeFile) return;
+    const dot = activeFile.name.lastIndexOf('.');
+    setBaseName(dot > 0 ? activeFile.name.slice(0, dot) : activeFile.name);
+  }, [activeFile?.id, activeFile?.name, activeFile?.language]);
   const people = [...users].sort((a, b) => (b.id === socket?.id) - (a.id === socket?.id));
   const others = Math.max(0, users.length - 1);
 
@@ -276,9 +293,8 @@ export default function EditorPage() {
     // executeEdits (not setValue) keeps undo history and syncs through the Yjs binding.
     editor.executeEdits('upload', [{ range: editor.getModel().getFullModelRange(), text }]);
     editor.pushUndoStop();
-    setLanguage(match.value);
-    setBaseName(file.name.slice(0, dot));
-    socket?.emit('file-meta', { roomId, meta: { language: match.value, baseName: file.name.slice(0, dot) } });
+    socket?.emit('file-rename', { roomId, fileId: activeFileId, name: file.name });
+    socket?.emit('file-language', { roomId, fileId: activeFileId, language: match.value });
   };
 
   return (
@@ -355,6 +371,63 @@ export default function EditorPage() {
             </button>
           </section>
 
+          <section className="rounded-lg border border-line bg-surface p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className={eyebrow}>Project files ({files.length})</h2>
+              <button
+                type="button"
+                className={`${btnGhost} h-6 px-1.5 text-xs`}
+                title="Create a new file"
+                onClick={() => {
+                  const name = window.prompt('New file name (include extension)', 'utils.js');
+                  if (!name?.trim()) return;
+                  const dot = name.trim().lastIndexOf('.');
+                  const extName = dot > 0 ? name.trim().slice(dot + 1).toLowerCase() : '';
+                  const match = LANGUAGES.find((item) => item.ext === extName);
+                  if (!match) { setFileOperationError(`Unsupported file extension. Use: ${LANGUAGES.map((item) => '.' + item.ext).join(', ')}`); return; }
+                  const id = `file-${window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`}`;
+                  setFileOperationError(null);
+                  socket?.emit('file-create', { roomId, file: { id, name: name.trim(), language: match.value } });
+                  setActiveFileId(id);
+                }}
+              >+ New</button>
+            </div>
+            <ul className="space-y-1">
+              {files.map((file) => (
+                <li key={file.id} className="group flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => { setActiveFileId(file.id); setFileOperationError(null); }}
+                    className={`min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left font-mono text-xs ${file.id === activeFileId ? 'bg-accent/10 text-accent' : 'text-soft hover:bg-white/5 hover:text-fg'}`}
+                    title={file.name}
+                  >{file.name}</button>
+                  <button
+                    type="button"
+                    className="rounded px-1.5 py-1 text-[10px] text-muted opacity-0 hover:bg-white/5 hover:text-fg focus:opacity-100 group-hover:opacity-100"
+                    title={`Rename ${file.name}`}
+                    onClick={() => {
+                      const name = window.prompt('Rename file (include extension)', file.name);
+                      if (!name?.trim() || name.trim() === file.name) return;
+                      setFileOperationError(null);
+                      socket?.emit('file-rename', { roomId, fileId: file.id, name: name.trim() });
+                    }}
+                  >Rename</button>
+                  {file.id !== 'main' && <button
+                    type="button"
+                    className="rounded px-1.5 py-1 text-[10px] text-muted opacity-0 hover:bg-red-500/10 hover:text-red-300 focus:opacity-100 group-hover:opacity-100"
+                    title={`Delete ${file.name}`}
+                    onClick={() => {
+                      if (!window.confirm(`Delete ${file.name} for everyone in this room?`)) return;
+                      setFileOperationError(null);
+                      socket?.emit('file-delete', { roomId, fileId: file.id });
+                    }}
+                  >×</button>}
+                </li>
+              ))}
+            </ul>
+            {fileOperationError && <p role="alert" className="mt-2 text-xs text-red-300">{fileOperationError}</p>}
+          </section>
+
           <section>
             <h2 className={`${eyebrow} mb-2 px-1`}>In this room ({users.length})</h2>
             {users.length === 0 ? (
@@ -410,8 +483,12 @@ export default function EditorPage() {
                 aria-label="Language"
                 value={language}
                 onChange={(e) => {
-                  setLanguage(e.target.value);
-                  socket?.emit('file-meta', { roomId, meta: { language: e.target.value, baseName } });
+                  const nextLanguage = e.target.value;
+                  const nextExt = LANGUAGES.find((item) => item.value === nextLanguage)?.ext || nextLanguage;
+                  const dot = fileName.lastIndexOf('.');
+                  const nextName = dot > 0 ? `${fileName.slice(0, dot)}.${nextExt}` : `${fileName}.${nextExt}`;
+                  socket?.emit('file-language', { roomId, fileId: activeFileId, language: nextLanguage });
+                  if (nextName !== fileName) socket?.emit('file-rename', { roomId, fileId: activeFileId, name: nextName });
                 }}
                 className={`h-8 cursor-pointer rounded border border-line-strong bg-raised px-2 text-sm text-fg ${focus}`}
               >
@@ -477,7 +554,9 @@ export default function EditorPage() {
             <div className="absolute inset-0">
               {socket && profile && (
                 <Editor
+                  key={activeFileId}
                   roomId={roomId}
+                  fileId={activeFileId}
                   socket={socket}
                   currentUser={profile}
                   language={language}
