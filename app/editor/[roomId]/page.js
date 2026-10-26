@@ -185,10 +185,14 @@ export default function EditorPage() {
     });
     s.on('disconnect', () => setConnected(false));
     s.on('users-update', setUsers);
-    const onProjectFiles = ({ files: nextFiles } = {}) => {
+    const onProjectFiles = ({ files: nextFiles, action, fileId, createdBy } = {}) => {
       if (!Array.isArray(nextFiles) || nextFiles.length === 0) return;
       setFiles(nextFiles);
-      setActiveFileId((current) => nextFiles.some((file) => file.id === current) ? current : nextFiles[0].id);
+      setActiveFileId((current) => {
+        // Only the person who created the file switches to it; collaborators keep their current file open.
+        if (action === 'create' && createdBy === s.id && nextFiles.some((file) => file.id === fileId)) return fileId;
+        return nextFiles.some((file) => file.id === current) ? current : nextFiles[0].id;
+      });
     };
     const onFileOperationError = ({ message } = {}) => {
       setFileOperationError(typeof message === 'string' ? message : 'That file operation could not be completed.');
@@ -388,7 +392,6 @@ export default function EditorPage() {
                   const id = `file-${window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`}`;
                   setFileOperationError(null);
                   socket?.emit('file-create', { roomId, file: { id, name: name.trim(), language: match.value } });
-                  setActiveFileId(id);
                 }}
               >+ New</button>
             </div>

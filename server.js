@@ -179,7 +179,7 @@ app.prepare().then(() => {
       const nextFile = { id: file.id, name: file.name.trim(), language: file.language };
       room.files.push(nextFile);
       room.docs.set(nextFile.id, new Y.Doc());
-      io.to(roomId).emit('project-files', { files: publicFiles(room), action: 'create', fileId: nextFile.id });
+      io.to(roomId).emit('project-files', { files: publicFiles(room), action: 'create', fileId: nextFile.id, createdBy: socket.id });
     });
 
     socket.on('file-rename', ({ roomId, fileId, name } = {}) => {
